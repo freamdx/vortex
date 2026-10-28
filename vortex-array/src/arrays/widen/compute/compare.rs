@@ -13,9 +13,11 @@ use crate::arrays::BoolArray;
 use crate::arrays::ConstantArray;
 use crate::arrays::Widen;
 use crate::arrays::widen::WidenArraySlotsExt;
+use crate::arrays::widen::compute::cast_keeping_nullability;
+use crate::arrays::widen::compute::constant_fits_values;
+use crate::arrays::widen::compute::constant_in_values_ptype;
+use crate::arrays::widen::compute::ptype_holding_both_values;
 use crate::builtins::ArrayBuiltins;
-use crate::dtype::DType;
-use crate::scalar::PValue;
 use crate::scalar::Scalar;
 use crate::scalar_fn::fns::binary::CompareKernel;
 use crate::scalar_fn::fns::operators::CompareOperator;
@@ -41,73 +43,31 @@ impl CompareKernel for Widen {
             return Ok(None);
         };
         let values = lhs.values();
-        let Some(fits) = constant_fits_child(constant, values.dtype()) else {
+        let Some(fits) = constant_fits_values(constant, values.dtype()) else {
             return Ok(None);
         };
         if !fits {
             return compare_out_of_range(lhs, constant, operator, ctx).map(Some);
         }
 
-        let constant_dtype = values
-            .dtype()
-            .with_nullability(constant.dtype().nullability());
-        let constant = ConstantArray::new(constant.cast(&constant_dtype)?, lhs.len()).into_array();
+        let constant = constant_in_values_ptype(constant, values, lhs.len())?;
 
         values.binary(constant, Operator::from(operator)).map(Some)
     }
 }
 
-/// Returns whether the range of the integer dtype `child` holds `constant`.
-///
-/// Returns `None` when `child` is not an integer dtype, when `constant` is null, and when
-/// `constant` is not an integer with the signedness of `child`.
-pub(super) fn constant_fits_child(constant: &Scalar, child: &DType) -> Option<bool> {
-    let DType::Primitive(ptype, _) = child else {
-        return None;
-    };
-    let value = constant.as_primitive_opt()?.pvalue()?;
-
-    // `PValue` compares an integer with another value through `i64` or `u64`, and it panics when
-    // the other value does not convert. So only integers of the same signedness compare here.
-    let value_ptype = value.ptype();
-    if !ptype.is_int() || !value_ptype.is_int() {
-        return None;
-    }
-    if ptype.is_signed_int() != value_ptype.is_signed_int() {
-        return None;
-    }
-
-    Some(PValue::min_value(*ptype) <= value && value <= PValue::max_value(*ptype))
-}
-
 /// Compares the values of two `Widen` arrays at the wider of the two value types.
-///
-/// Both value types have the signedness of the logical dtype, so the wider one holds every value of
-/// the narrower one.
 fn compare_narrow_values(
     lhs: ArrayView<'_, Widen>,
     rhs: ArrayView<'_, Widen>,
     operator: CompareOperator,
 ) -> VortexResult<Option<ArrayRef>> {
-    let (
-        DType::Primitive(lhs_ptype, lhs_nullability),
-        DType::Primitive(rhs_ptype, rhs_nullability),
-    ) = (lhs.values().dtype(), rhs.values().dtype())
-    else {
+    let Some(ptype) = ptype_holding_both_values(lhs, rhs) else {
         return Ok(None);
     };
-    let ptype = if lhs_ptype.byte_width() >= rhs_ptype.byte_width() {
-        *lhs_ptype
-    } else {
-        *rhs_ptype
-    };
 
-    let lhs_values = lhs
-        .values()
-        .cast(DType::Primitive(ptype, *lhs_nullability))?;
-    let rhs_values = rhs
-        .values()
-        .cast(DType::Primitive(ptype, *rhs_nullability))?;
+    let lhs_values = cast_keeping_nullability(lhs.values(), ptype)?;
+    let rhs_values = cast_keeping_nullability(rhs.values(), ptype)?;
 
     lhs_values
         .binary(rhs_values, Operator::from(operator))
