@@ -11895,6 +11895,7 @@ dependencies = [
  "url",
  "vortex",
  "vortex-array",
+ "vortex-duckdb",
  "vortex-sequence",
  "vortex-spatial",
  "vortex-utils",
