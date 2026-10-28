@@ -1,8 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright the Vortex contributors
 
-//! Operations that run on the values of a [`Widen`](crate::arrays::Widen).
+//! Operations that run on the values of a [`Widen`](crate::arrays::Widen) instead of on a
+//! widened copy.
+//!
+//! An operation runs on the values only where it gives the canonical result. Decoding a value is a
+//! strictly increasing, one-to-one map that keeps validity, so comparisons, sortedness, constancy
+//! and extrema carry over from the values, and every value in a result widens exactly to the
+//! logical dtype.
+//!
+//! [`AggregateFnSession::default`] registers the aggregate kernel, not
+//! [`initialize`](super::initialize), because the kernel session runs `initialize` on a temporary
+//! session and drops its aggregate registry.
+//!
+//! [`AggregateFnSession::default`]: crate::aggregate_fn::session::AggregateFnSession::default
 
+pub(crate) mod aggregate;
 mod cast;
 mod compare;
 mod fill_null;
